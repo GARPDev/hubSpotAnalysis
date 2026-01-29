@@ -1,0 +1,17 @@
+{
+  "name": "hubspot-analysis",
+  "version": "1.0.0",
+  "description": "Query HubSpot contacts, aggregate deals and activities, and set custom counter properties",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "run": "node index.js"
+  },
+  "keywords": ["hubspot", "crm", "contacts", "deals", "activities"],
+  "license": "MIT",
+  "dependencies": {
+    "@hubspot/api-client": "^11.0.0",
+    "dotenv": "^16.4.5"
+  }
+}
