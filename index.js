@@ -7,7 +7,6 @@
  * 4. Outputs counts to console (no property writes for now)
  */
 
-import 'dotenv/config'
 import { Client } from '@hubspot/api-client'
 import { config } from './config.js'
 
@@ -162,7 +161,7 @@ async function fetchDealDetails(client, dealIds) {
 async function main() {
   const accessToken = process.env.HUBSPOT_ACCESS_TOKEN
   if (!accessToken) {
-    console.error('Missing HUBSPOT_ACCESS_TOKEN. Set it in .env or the environment.')
+    console.error('Missing HUBSPOT_ACCESS_TOKEN. Set it in your environment (e.g. export HUBSPOT_ACCESS_TOKEN=your-token).')
     process.exit(1)
   }
 

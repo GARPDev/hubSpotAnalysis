@@ -18,9 +18,17 @@ Node.js script that connects to your HubSpot instance, queries a subset of conta
 
 3. **Environment**
 
+   Set the access token as an environment variable on your machine (do not commit it). For example, in your shell config (e.g. `~/.zshrc`):
+
    ```bash
-   cp .env.example .env
-   # Edit .env and set HUBSPOT_ACCESS_TOKEN=your-token
+   export HUBSPOT_ACCESS_TOKEN=your-token
+   ```
+
+   Or run once in the current shell before `npm start`:
+
+   ```bash
+   export HUBSPOT_ACCESS_TOKEN=your-token
+   npm start
    ```
 
 4. **Custom properties in HubSpot**
