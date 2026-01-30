@@ -1,6 +1,10 @@
 /**
  * Configuration for the HubSpot contact analysis script.
  * Adjust filters, properties, and custom property names to match your HubSpot account.
+ *
+ * Required env var (set on your machine, not in a file):
+ *   export HUBSPOT_ACCESS_TOKEN=your-token
+ * Add that line to ~/.zshrc (or ~/.bashrc) so it's set in every shell, or run it once before npm start.
  */
 
 export const config = {
@@ -32,7 +36,7 @@ export const config = {
     /** Max contacts per search page (max 200). */
     limit: 100,
     /** Max total contacts to process in this run (set to 0 for no limit). */
-    maxContacts: 10,
+    maxContacts: 20,
   },
 
   /**
@@ -61,6 +65,12 @@ export const config = {
     notes: 'num_notes',
     tasks: 'num_tasks',
   },
+
+  /**
+   * Contact property (internal name) set to today's date when the contact is processed.
+   * Create in HubSpot: Settings → Properties → Contact, type Date.
+   */
+  analysisCompletedDateProperty: 'analysis_completed_date',
 
   /** Delay in ms between batch API calls to avoid rate limits. */
   delayBetweenBatchesMs: 150,

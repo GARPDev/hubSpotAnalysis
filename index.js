@@ -4,7 +4,8 @@
  * 1. Connects to HubSpot
  * 2. Queries a subset of contacts (filter + properties from config)
  * 3. For each contact, fetches associated deals and activities (calls, emails, meetings, notes, tasks)
- * 4. Outputs counts to console (no property writes for now)
+ * 4. Sets analysis_completed_date to today for each processed contact
+ * 5. Outputs counts to console
  */
 
 import { Client } from '@hubspot/api-client'
@@ -12,6 +13,7 @@ import { config } from './config.js'
 
 const ASSOCIATIONS_BATCH_SIZE = 1000 // v4 batch read limit
 const DEALS_BATCH_SIZE = 100 // HubSpot batch read limit
+const CONTACTS_BATCH_UPDATE_SIZE = 100 // HubSpot batch update limit
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -158,6 +160,25 @@ async function fetchDealDetails(client, dealIds) {
   return map
 }
 
+/**
+ * Set analysis_completed_date to today (ms since epoch) for the given contact IDs.
+ * Uses batch update; chunks by CONTACTS_BATCH_UPDATE_SIZE.
+ */
+async function setAnalysisCompletedDate(client, contactIds) {
+  const propName = config.analysisCompletedDateProperty
+  if (!propName) return
+  const todayMs = String(Date.now())
+  for (let i = 0; i < contactIds.length; i += CONTACTS_BATCH_UPDATE_SIZE) {
+    const batch = contactIds.slice(i, i + CONTACTS_BATCH_UPDATE_SIZE)
+    const inputs = batch.map((id) => ({
+      id: String(id),
+      properties: { [propName]: todayMs },
+    }))
+    await client.crm.contacts.batchApi.update({ inputs })
+    await sleep(config.delayBetweenBatchesMs)
+  }
+}
+
 async function main() {
   const accessToken = process.env.HUBSPOT_ACCESS_TOKEN
   if (!accessToken) {
@@ -172,7 +193,7 @@ async function main() {
 
   const stageIdToLabel = await fetchDealStageLabels(client)
 
-  console.log('Starting HubSpot contact analysis (output only, no property writes)...')
+  console.log('Starting HubSpot contact analysis...')
   console.log('Contact search:', JSON.stringify(config.contactSearch.filterGroups, null, 2))
   console.log('Counters:', counterKeys.join(', '))
   console.log('')
@@ -216,6 +237,7 @@ async function main() {
       console.log('')
     }
 
+    await setAnalysisCompletedDate(client, contactIds)
     totalProcessed += contactIds.length
     console.log(`  --- page done, ${totalProcessed} total so far ---\n`)
   }
