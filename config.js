@@ -57,6 +57,19 @@ export const config = {
   },
 
   /**
+   * Email activity: properties to fetch when querying associated emails per contact.
+   * Standard CRM email properties: hs_timestamp, hs_email_subject, hs_email_status, hs_email_direction.
+   * hs_email_status: SENT, BOUNCED, FAILED, SCHEDULED, SENDING (SENT ≈ delivered).
+   * Add custom/read-only open/click property names if your portal has them (e.g. hs_email_open).
+   */
+  emailActivityProperties: [
+    'hs_timestamp',
+    'hs_email_subject',
+    'hs_email_status',
+    'hs_email_direction',
+  ],
+
+  /**
    * Custom contact property internal names where each counter will be written.
    * Create these properties in HubSpot (Settings → Properties → Contact) as number type.
    * Use internal names (lowercase, underscores).
@@ -104,6 +117,22 @@ export const config = {
    * - When no cache: full fetch (with limits), then save to cache.
    */
   formSubmissionsCachePath: 'cache/form-submissions.json',
+
+  /**
+   * Fetch email engagement (opens, clicks) from HubSpot Events API.
+   * Requires Marketing/Sales/Service/Content Hub Enterprise (or Data Hub Enterprise).
+   * Private app scope: oauth2 or private_apps (Events API uses same as CRM).
+   * Set to false if you don't have Enterprise or to skip the extra API calls.
+   */
+  fetchEmailEngagementEvents: true,
+
+  /**
+   * Event type names for email open and click. If not set, we try to discover from
+   * GET /events/v3/events/event-types and match names containing "email" + "open" / "click".
+   * Override if your portal uses different names (e.g. "EMAIL_OPEN", "hs_email_open").
+   */
+  eventTypeEmailOpen: null,
+  eventTypeEmailClick: null,
 }
 
 export default config

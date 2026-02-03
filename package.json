@@ -8,9 +8,16 @@
     "start": "node index.js",
     "run": "node index.js"
   },
-  "keywords": ["hubspot", "crm", "contacts", "deals", "activities"],
+  "keywords": [
+    "hubspot",
+    "crm",
+    "contacts",
+    "deals",
+    "activities"
+  ],
   "license": "MIT",
   "dependencies": {
-    "@hubspot/api-client": "^11.0.0"
+    "@hubspot/api-client": "^11.0.0",
+    "node-fetch": "^3.3.2"
   }
 }

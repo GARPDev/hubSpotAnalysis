@@ -4,20 +4,25 @@
  * 1. Connects to HubSpot
  * 2. Queries a subset of contacts (filter + properties from config)
  * 3. For each contact, fetches associated deals and activities (calls, emails, meetings, notes, tasks)
- * 4. Sets analysis_completed_date to today for each processed contact
- * 5. Outputs counts to console
+ * 4. Queries email activity (subject, status, timestamp, direction) for associated emails
+ * 5. Sets analysis_completed_date to today for each processed contact
+ * 6. Outputs counts and email activity to console
  */
 
 import { Client } from '@hubspot/api-client'
+import fetch from 'node-fetch'
 import fs from 'fs/promises'
 import path from 'path'
 import { config } from './config.js'
 
 const ASSOCIATIONS_BATCH_SIZE = 1000 // v4 batch read limit
 const DEALS_BATCH_SIZE = 100 // HubSpot batch read limit
+const EMAILS_BATCH_SIZE = 100 // HubSpot batch read limit
 const CONTACTS_BATCH_UPDATE_SIZE = 100 // HubSpot batch update limit
 const FORMS_API_BASE = 'https://api.hubapi.com' // Legacy Forms API
 const FORM_SUBMISSIONS_PAGE_SIZE = 50 // Forms v1 max
+const EVENTS_API_BASE = 'https://api.hubapi.com' // Events API v3 (Enterprise)
+const EVENTS_PAGE_SIZE = 100
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -426,6 +431,122 @@ async function fetchDealDetails(client, dealIds) {
 }
 
 /**
+ * Batch fetch email activity details (subject, status, timestamp, direction) for a list of email IDs.
+ * Returns Map<emailId, { hs_timestamp, hs_email_subject, hs_email_status, hs_email_direction }>.
+ */
+async function fetchEmailDetails(client, emailIds) {
+  const uniqueIds = [...new Set(emailIds)]
+  if (uniqueIds.length === 0) return new Map()
+
+  const props = config.emailActivityProperties || [
+    'hs_timestamp',
+    'hs_email_subject',
+    'hs_email_status',
+    'hs_email_direction',
+  ]
+  const map = new Map()
+
+  for (let i = 0; i < uniqueIds.length; i += EMAILS_BATCH_SIZE) {
+    const batch = uniqueIds.slice(i, i + EMAILS_BATCH_SIZE).map((id) => ({ id }))
+    const response = await client.crm.objects.emails.batchApi.read({
+      inputs: batch,
+      properties: props,
+    })
+    const results = response.results || []
+    for (const email of results) {
+      const id = String(email.id)
+      const p = email.properties || {}
+      map.set(id, {
+        hs_timestamp: p.hs_timestamp ?? null,
+        hs_email_subject: p.hs_email_subject ?? '(no subject)',
+        hs_email_status: p.hs_email_status ?? '(unknown)',
+        hs_email_direction: p.hs_email_direction ?? null,
+        ...p,
+      })
+    }
+    await sleep(config.delayBetweenBatchesMs)
+  }
+  return map
+}
+
+/**
+ * Fetch list of event type names from HubSpot Events API (GET /events/v3/events/event-types).
+ * Requires Enterprise tier. Returns [] on error or if API not available.
+ */
+async function fetchEventTypes(accessToken) {
+  const url = `${EVENTS_API_BASE}/events/v3/events/event-types`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) return []
+  const data = await res.json()
+  return Array.isArray(data.eventTypes) ? data.eventTypes : []
+}
+
+/**
+ * Resolve event type names for email open and click from config or by matching event-types list.
+ * Returns { eventTypeOpen: string|null, eventTypeClick: string|null }.
+ */
+async function resolveEmailEngagementEventTypes(accessToken) {
+  const openOverride = config.eventTypeEmailOpen
+  const clickOverride = config.eventTypeEmailClick
+  if (openOverride && clickOverride) return { eventTypeOpen: openOverride, eventTypeClick: clickOverride }
+
+  const types = await fetchEventTypes(accessToken)
+  const lower = (s) => String(s).toLowerCase()
+  const openMatch = types.find((t) => lower(t).includes('email') && lower(t).includes('open'))
+  const clickMatch = types.find((t) => lower(t).includes('email') && lower(t).includes('click'))
+  return {
+    eventTypeOpen: openOverride ?? openMatch ?? null,
+    eventTypeClick: clickOverride ?? clickMatch ?? null,
+  }
+}
+
+/**
+ * Fetch event counts per contact for email open and click event types.
+ * Uses Events API getPage per contact (one request per contact, then count by eventType).
+ * Returns Map<contactId, { opens: number, clicks: number }>.
+ */
+async function fetchContactEmailEngagementCounts(client, contactIds, eventTypeOpen, eventTypeClick) {
+  const map = new Map()
+  for (const id of contactIds) {
+    map.set(id, { opens: 0, clicks: 0 })
+  }
+  if (!eventTypeOpen && !eventTypeClick) return map
+
+  for (const contactId of contactIds) {
+    let after = undefined
+    const counts = { opens: 0, clicks: 0 }
+    try {
+      do {
+        const param = {
+          objectType: 'contact',
+          objectId: Number(contactId),
+          limit: EVENTS_PAGE_SIZE,
+          ...(after && { after }),
+        }
+        const response = await client.events.eventsApi.getPage(param)
+        const results = response.results || []
+        for (const event of results) {
+          const t = event.eventType
+          if (t === eventTypeOpen) counts.opens += 1
+          if (t === eventTypeClick) counts.clicks += 1
+        }
+        const next = response.paging?.next?.after
+        after = next || null
+        if (after) await sleep(config.delayBetweenBatchesMs)
+      } while (after)
+    } catch (err) {
+      // Events API may be unavailable (e.g. not Enterprise); leave counts at 0
+      if (err.status !== 403 && err.status !== 404) console.error(`Events API for contact ${contactId}:`, err.message)
+    }
+    map.set(contactId, counts)
+    await sleep(config.delayBetweenBatchesMs)
+  }
+  return map
+}
+
+/**
  * Set analysis_completed_date to today at midnight UTC (ms since epoch) for the given contact IDs.
  * HubSpot date properties require midnight, not a timestamp with time.
  */
@@ -463,6 +584,20 @@ async function main() {
   console.log('Starting HubSpot contact analysis...')
   console.log('Contact search:', JSON.stringify(config.contactSearch.filterGroups, null, 2))
   console.log('Counters:', counterKeys.join(', '))
+
+  let eventTypeOpen = null
+  let eventTypeClick = null
+  if (config.fetchEmailEngagementEvents) {
+    const resolved = await resolveEmailEngagementEventTypes(accessToken)
+    eventTypeOpen = resolved.eventTypeOpen
+    eventTypeClick = resolved.eventTypeClick
+    if (eventTypeOpen || eventTypeClick) {
+      console.log('Events API (email engagement):', { open: eventTypeOpen ?? '—', click: eventTypeClick ?? '—' })
+    } else {
+      console.log('Events API: no email open/click event types found (Enterprise tier may be required).')
+    }
+  }
+
   let formSubmissionsByEmail = new Map()
   if (config.fetchFormSubmissions) {
     console.log('Fetching form submissions (Forms API)...')
@@ -478,10 +613,22 @@ async function main() {
     const associationsByContact = await buildAssociations(client, contactIds, activityTypesToCount)
 
     const allDealIds = []
+    const allEmailIds = []
     for (const assoc of associationsByContact.values()) {
       allDealIds.push(...(assoc.deals || []))
+      allEmailIds.push(...(assoc.emails || []))
     }
     const dealDetails = await fetchDealDetails(client, allDealIds)
+    const emailDetails = await fetchEmailDetails(client, allEmailIds)
+    let emailEngagementByContact = new Map()
+    if (config.fetchEmailEngagementEvents && (eventTypeOpen || eventTypeClick)) {
+      emailEngagementByContact = await fetchContactEmailEngagementCounts(
+        client,
+        contactIds,
+        eventTypeOpen,
+        eventTypeClick
+      )
+    }
 
     for (const contact of page) {
       const associations = associationsByContact.get(contact.id) || {}
@@ -521,9 +668,47 @@ async function main() {
         console.log(`      Deal: ${dealId}  "${details.dealname}"  amount: ${details.amount}  stage: ${stageName}`)
       }
 
-      // Loop over each activity (calls, emails, meetings, notes, tasks)
+      // Email activity: show each email with subject, status, timestamp, direction
+      const emailIds = associations.emails || []
+      if (emailIds.length > 0) {
+        const byStatus = { SENT: 0, BOUNCED: 0, FAILED: 0, SCHEDULED: 0, SENDING: 0, other: 0 }
+        console.log(`    Email activity (${emailIds.length} email(s)):`)
+        for (const emailId of emailIds) {
+          const details = emailDetails.get(emailId)
+          if (details) {
+            const status = (details.hs_email_status || '').toUpperCase()
+            if (status === 'SENT') byStatus.SENT += 1
+            else if (status === 'BOUNCED') byStatus.BOUNCED += 1
+            else if (status === 'FAILED') byStatus.FAILED += 1
+            else if (status === 'SCHEDULED') byStatus.SCHEDULED += 1
+            else if (status === 'SENDING') byStatus.SENDING += 1
+            else byStatus.other += 1
+            const ts = details.hs_timestamp
+              ? (typeof details.hs_timestamp === 'number'
+                ? new Date(details.hs_timestamp).toISOString()
+                : String(details.hs_timestamp))
+              : '(no date)'
+            console.log(`      - ${emailId}  subject: "${details.hs_email_subject}"  status: ${details.hs_email_status}  direction: ${details.hs_email_direction ?? '—'}  ${ts}`)
+          } else {
+            console.log(`      - ${emailId}  (details not found)`)
+          }
+        }
+        const summary = Object.entries(byStatus)
+          .filter(([, n]) => n > 0)
+          .map(([k, n]) => `${k}: ${n}`)
+          .join(', ')
+        if (summary) console.log(`    Email summary: ${summary}`)
+      }
+
+      // Email engagement from Events API (opens, clicks)
+      const engagement = emailEngagementByContact.get(contact.id)
+      if (engagement && (engagement.opens > 0 || engagement.clicks > 0)) {
+        console.log(`    Email engagement (Events API): opens: ${engagement.opens}, clicks: ${engagement.clicks}`)
+      }
+
+      // Loop over each activity (calls, meetings, notes, tasks) – emails already shown above
       for (const activityType of counterKeys) {
-        if (activityType === 'deals') continue
+        if (activityType === 'deals' || activityType === 'emails') continue
         const ids = associations[activityType] || []
         for (const activityId of ids) {
           console.log(`      ${activityType}: ${activityId}`)

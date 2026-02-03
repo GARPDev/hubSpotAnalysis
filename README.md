@@ -53,6 +53,7 @@ Edit **`config.js`** to control:
 - **Counts**: `activityTypesToCount` (which association types to count: deals, calls, emails, meetings, notes, tasks).
 - **Custom properties**: `customProperties` (which contact number property to set for each counter).
 - **Limits**: `contactSearch.limit` (page size), `contactSearch.maxContacts` (0 = no limit), and `delayBetweenBatchesMs` (throttling).
+- **Email engagement (Events API)**: `fetchEmailEngagementEvents` (true/false). When true, the script fetches email **opens** and **clicks** per contact via the [Events API](https://developers.hubspot.com/docs/api/events/event-analytics). This requires a Hub **Enterprise** tier (Marketing, Sales, Service, or Content Hub). Event type names are auto-discovered from your account, or you can set `eventTypeEmailOpen` and `eventTypeEmailClick` in `config.js` if needed.
 
 ## Run
 
@@ -67,10 +68,12 @@ The script will:
 1. Search contacts using the filters and properties in `config.js`.
 2. For each batch of contacts, call the HubSpot Associations v4 API to get associated deals and activities.
 3. Count per contact: deals, calls, emails, meetings, notes, tasks.
-4. Batch-update each contact with the configured custom number properties.
+4. Optionally fetch email engagement (opens, clicks) from the Events API per contact.
+5. Batch-update each contact with the configured custom number properties.
 
 ## Requirements
 
 - Node.js 18+
 - HubSpot account with CRM (Marketing/Sales/Service Hub Free or higher)
 - Custom contact properties created in HubSpot for the counters you use
+- **Email opens/clicks**: Hub Marketing, Sales, Service, or Content Hub **Enterprise** (for Events API)
