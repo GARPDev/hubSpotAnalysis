@@ -27,6 +27,10 @@ export const config = {
             operator: 'GT',
             value: '0',
           },
+          {
+            propertyName: 'analysis_completed_date',
+            operator: 'HAS_PROPERTY',
+          },
         ],
       },
     ],
@@ -74,6 +78,32 @@ export const config = {
 
   /** Delay in ms between batch API calls to avoid rate limits. */
   delayBetweenBatchesMs: 150,
+
+  /**
+   * Fetch form submissions via Forms API and match to contacts by email.
+   * Requires Forms API scopes (e.g. forms) on your private app.
+   */
+  fetchFormSubmissions: true,
+
+  /**
+   * Limit form submission fetch to speed up runs.
+   * - maxPerForm: max submissions to fetch per form (newest first). 0 = no limit (slow).
+   * - maxForms: max forms to fetch submissions for. 0 = all forms.
+   * - maxAgeMonths: only include submissions from the last N months. 0 = no date filter.
+   * - concurrency: number of forms to fetch in parallel (1 = sequential).
+   */
+  formSubmissionsMaxPerForm: 500,
+  formSubmissionsMaxForms: 0,
+  formSubmissionsMaxAgeMonths: 24,
+  formSubmissionsConcurrency: 3,
+
+  /**
+   * Cache form submissions to a file to speed up repeated runs.
+   * - cachePath: file path (e.g. 'cache/form-submissions.json'). Falsy = no cache.
+   * - When cache exists: load it, then fetch only the newest page per form from the API and merge.
+   * - When no cache: full fetch (with limits), then save to cache.
+   */
+  formSubmissionsCachePath: 'cache/form-submissions.json',
 }
 
 export default config
